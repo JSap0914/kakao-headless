@@ -14,9 +14,15 @@ OS-authorized processes. This is not a sandbox against malicious local agents.
 The exported raw transport is a low-level SDK, not an authorization boundary;
 agent workflows must go through the guarded CLI.
 
-Credentials go over stdin to a Swift Security-framework helper and are stored as
-non-synchronizing generic-password Keychain items. They are not passed as command
-arguments, environment variables, or application logs. Passwords are not saved.
+Initial credentials go over stdin to a Swift Security-framework helper and are stored
+as non-synchronizing generic-password Keychain items. Rotated credentials use a local
+AES-256-GCM envelope, with HKDF-derived wrapping key from the existing Keychain-protected
+OAuth secret, a fresh random salt/nonce, and account/device-bound authenticated context.
+The original Keychain root is not modified, so this does not bypass an OS denial of
+Keychain mutation or loosen its ACL. Deleting/changing the root can make the envelope
+unreadable: corruption, missing roots and authentication failures fail closed.
+Credentials are not passed as command arguments, environment variables, or application
+logs. Passwords are not saved.
 The helper runs with local command-line tools and is not a signed standalone
 credential broker. Keychain access may require local OS approval. Registration
 codes appear only in the local auth command result: never paste them into public
@@ -35,7 +41,10 @@ can still change between the final check and WRITE. Use a known test conversatio
 ## Local data
 
 Preview files contain private text and member IDs; receipts and provider cache
-contain IDs. Files are mode 0600 and the state directory is 0700, but previews
+contain IDs. The rotated-credential envelope is encrypted, not a plaintext token cache.
+Protect both the Keychain root and local state backups. The root secret remains in
+Keychain even when the corresponding server token expires; it acts as the wrapping
+secret until explicit local logout/reconnection. Files are mode 0600 and the state directory is 0700, but previews
 are not encrypted. Do not put state inside a repository or shared/symlinked
 folder. The threat model excludes an attacker controlling the local filesystem.
 Explicitly clean private state only after reconciling all outstanding sends;

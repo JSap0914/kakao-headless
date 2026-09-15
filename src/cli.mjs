@@ -4,12 +4,12 @@ import { readFile, mkdir, chmod } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { emitKeypressEvents } from 'node:readline';
-import { KeychainVault } from './vault.mjs';
+import { CredentialVault } from './credential-vault.mjs';
 import { Auth } from './auth.mjs';
 import { SendGuard } from './guard.mjs';
 import { LocoTransport, loadProvider, validAccount, fail, SUPPORTED_VERSION } from './transport.mjs';
 
-const HELP = `kakao-headless 0.1.0 (experimental, macOS Keychain)
+const HELP = `kakao-headless 0.1.1 (experimental, macOS Keychain)
 
   doctor                              Offline runtime/provider check
   auth begin --email EMAIL --ack-risk  Hidden password prompt; phone registration
@@ -22,6 +22,8 @@ const HELP = `kakao-headless 0.1.0 (experimental, macOS Keychain)
   preview CHAT_ID --text-file FILE --ack-risk
   send PREVIEW_ID --confirm --ack-risk Exactly one local attempt; no retry
   receipt PREVIEW_ID                   Inspect durable local outcome
+  reconcile PREVIEW_ID --log-id LOG_ID --ack-risk
+                                      Read-only history verification; never sends
 
 All output is JSON except help and local password prompts. State defaults to
 ~/.local/state/kakao-headless; override with --state-dir DIR. Unofficial LOCO
@@ -56,19 +58,19 @@ try {
   const { values: flags, positionals: args } = parseArgs({ allowPositionals: true, strict: true, options: {
     help: {type:'boolean',short:'h'}, 'ack-risk': {type:'boolean'}, confirm: {type:'boolean'},
     email:{type:'string'}, search:{type:'string'}, count:{type:'string'}, from:{type:'string'},
-    'text-file':{type:'string'}, 'state-dir':{type:'string'}
+    'text-file':{type:'string'}, 'state-dir':{type:'string'}, 'log-id':{type:'string'}
   } });
   const [command, target] = args;
   if (flags.help || !command) { console.log(HELP); }
   else if (command === 'doctor') {
     let provider = 'missing'; try { await loadProvider(); provider = SUPPORTED_VERSION; } catch(e) { provider = e.code; }
-    out({ version:'0.1.0', node:process.version, platform:process.platform, keychain_supported:process.platform==='darwin', provider, live_kakao_tested:false, aside_builtin_modified:false });
+    out({ version:'0.1.1', node:process.version, platform:process.platform, keychain_supported:process.platform==='darwin', provider, live_connection_checked:false, credential_status:'not_checked', aside_builtin_modified:false });
   } else {
-    const known = ['auth','chats','history','preview','send','receipt'];
+    const known = ['auth','chats','history','preview','send','receipt','reconcile'];
     if (!known.includes(command) || args.length > 2 || (command==='chats' && target)) fail('INVALID_COMMAND');
     const stateDir = flags['state-dir'] ?? join(homedir(), '.local', 'state', 'kakao-headless');
     await mkdir(stateDir, {recursive:true, mode:0o700}); await chmod(stateDir,0o700);
-    const vault = new KeychainVault();
+    const vault = new CredentialVault({stateDir});
     if (command === 'receipt') {
       out(await new SendGuard({ stateDir, transport: null }).receipt(target));
     } else if (command === 'auth' && target === 'logout') {
@@ -95,6 +97,10 @@ try {
           if (!flags['text-file']) fail('TEXT_FILE_REQUIRED');
           const text = await readFile(flags['text-file'],'utf8');
           out(await guard.preview(target,text));
+        }
+        if (command === 'reconcile') {
+          if (!flags['log-id']) fail('LOG_ID_REQUIRED');
+          out(await guard.reconcile(target,flags['log-id']));
         }
         if (command === 'send') {
           const result = await guard.send(target); out(result);

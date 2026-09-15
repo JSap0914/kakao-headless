@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 const cli=new URL('../src/cli.mjs',import.meta.url);
 function run(args){const r=spawnSync(process.execPath,[cli.pathname,...args],{encoding:'utf8',timeout:10000});return{...r,json:r.stdout?JSON.parse(r.stdout):null};}
-test('doctor is offline and does not claim live verification',()=>{const r=run(['doctor']);assert.equal(r.status,0);assert.equal(r.json.live_kakao_tested,false);assert.equal(r.json.aside_builtin_modified,false);});
+test('doctor is offline and does not claim live verification',()=>{const r=run(['doctor']);assert.equal(r.status,0);assert.equal(r.json.live_connection_checked,false);assert.equal(r.json.credential_status,'not_checked');assert.equal(r.json.aside_builtin_modified,false);});
 test('unknown command fails closed before keychain',()=>{const r=run(['destroy']);assert.equal(r.status,1);assert.equal(r.json.error,'INVALID_COMMAND');});
 test('risk acknowledgement and confirmation required before credentials or network',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'kh-cli-'));try{

@@ -1,92 +1,134 @@
 # kakao-headless
 
-Experimental, UI-free KakaoTalk read/write bridge for local agents, including Aside.
+[![CI](https://github.com/JSap0914/kakao-headless/actions/workflows/ci.yml/badge.svg)](https://github.com/JSap0914/kakao-headless/actions/workflows/ci.yml)
 
-**Status: alpha, not live-account verified.** Unit/contract tests are not evidence of real message delivery. This is not an official Kakao product or an update to Aside's built-in read-only connector. Unofficial protocol access can lead to account restrictions. Use a dedicated test account, not your primary account.
+A local KakaoTalk CLI for agents. List rooms, read messages and send text without controlling the KakaoTalk app UI.
 
-## What it does
+Uses `agent-messenger@2.37.1` as its LOCO provider, with an original MIT-licensed layer for credential storage, recipient checks, durable send reservations and history verification.
 
-- Lists existing rooms and reads message history through a pinned LOCO provider.
-- Does not call mark-read, typing, room-entry or app UI automation APIs for reads. A LOCO login is still an online session, not an offline database read.
-- Stores OAuth tokens in macOS Keychain, not plaintext credential JSON.
-- Separates device registration into `auth begin` and `auth finish`. The password is prompted locally without echo and is never persisted.
-- Creates a ten-minute preview bound to account, exact room ID, title/display name, members and exact text.
-- Rechecks the recipient, reserves the attempt durably, then calls raw `WRITE` once without the provider's automatic replay wrapper.
-- Validates packet/body status and exact log ID. Checks history for matching log ID, sender and text.
-- Writes explicit `verified`, `accepted_unverified`, `rejected` or `unknown` receipts. None means that the recipient has read the message.
+> Unofficial integration. Kakao may restrict accounts that use unofficial clients. Review the provider's terms and use a test account first. No affiliation with Kakao or Aside.
 
-Not included: new chats by contact name, attachments, group creation, automatic sending, a hosted service, an MCP server, or account restriction avoidance.
+## Features
+
+- **Read:** list/search existing rooms, fetch message history and page from an exact log ID.
+- **Send:** exact-recipient previews, account/member rechecks and one local WRITE attempt per preview.
+- **Verify:** distinguish server acceptance from an own-history match; reconcile ambiguous replies without resending.
+- **Authenticate:** two-step phone registration, hidden password input and explicit token refresh.
+- **Store securely:** initial secret in macOS Keychain; rotated credentials encrypted with AES-256-GCM under a Keychain-derived key. No plaintext token cache.
+- **Use with Aside:** bundled user skill for the installed CLI.
+
+Room lookup, history, forward paging, one direct-room text send, read-only reconciliation and token refresh/reconnection have been checked against a real account. Automated tests cover protocol compatibility and failure paths. See [validation details](docs/VALIDATION.md) for the exact scope.
 
 ## Install
 
-Requirements: macOS, Node >=22.13.0, and Apple command-line tools (`xcode-select --install`) for the Swift Keychain helper. Core mocked tests also run on Linux. Keychain may request local OS approval.
+Requires macOS, Node.js **22.13+**, and Apple command-line tools (`xcode-select --install`) for Keychain access. Core tests also run on Linux.
 
-Download the `.tgz` from [Releases](https://github.com/JSap0914/kakao-headless/releases). Install into a dedicated local directory, not into an existing app:
+Install into a dedicated directory:
 
 ```sh
-mkdir kakao-local && cd kakao-local
+mkdir -p "$HOME/.local/share/kakao-headless"
+cd "$HOME/.local/share/kakao-headless"
 npm init -y
-npm install --ignore-scripts /absolute/path/to/jsap0914-kakao-headless-0.1.0.tgz
-# Review THIRD_PARTY.md first. The provider is an explicit optional peer.
-npm install --ignore-scripts --save-prod agent-messenger@2.37.1
+npm install --ignore-scripts --save-exact \
+  https://github.com/JSap0914/kakao-headless/releases/download/v0.1.1/jsap0914-kakao-headless-0.1.1.tgz
+npm install --ignore-scripts --save-exact agent-messenger@2.37.1
 npx --no-install kakao-headless doctor
 ```
 
-`@jsap0914/kakao-headless` is distributed through GitHub Releases; do not assume it is published to the npm registry. **Do not install `agent-kakaotalk@0.0.1`: it is an empty defensive reservation, not the client.** `agent-kakaotalk` is a binary provided by the different `agent-messenger` package.
+The package is distributed through [GitHub Releases](https://github.com/JSap0914/kakao-headless/releases), not the npm registry. Release assets include checksums. The optional provider is installed separately; read [THIRD_PARTY.md](THIRD_PARTY.md) before using or redistributing it. Do not install `agent-kakaotalk@0.0.1`, which is a separate empty package-name reservation.
 
-The MIT license covers this bridge's original files only. The provider is not bundled. Its repository says MIT but lacks a root license grant; review its terms yourself before use or redistribution.
+Run the examples below from the installation directory. Optionally symlink `node_modules/.bin/kakao-headless` into a directory on your `PATH`.
 
-## Connect a test account
+## Connect an account
 
 ```sh
 npx --no-install kakao-headless auth begin --email YOU@example.com --ack-risk
-# Enter the locally displayed registration code on your phone.
-# Run before the challenge expires; password is prompted again:
+# Confirm the locally displayed registration code on your phone, then:
 npx --no-install kakao-headless auth finish --ack-risk
 ```
 
-The tool does not force-replace an occupied device slot. Do not put passwords in arguments, shell history, chat, CI, or GitHub. `auth refresh --ack-risk` explicitly refreshes and saves a rotated token. `auth logout` deletes local Keychain credentials; it does not revoke the remote session.
-
-For an already authorized test-account token, `auth import --ack-risk` accepts a JSON object on **stdin only** with `oauth_token`, `refresh_token` (optional), `user_id` (string), `device_uuid`, and `device_type` (`tablet` or `pc`). It does not extract tokens from another app. Never commit that input.
-
-## Read
+Passwords are prompted without echo and are never persisted. Keep passwords and registration codes out of chat, shell arguments, logs and GitHub. Device registration does not force-replace an occupied device slot.
 
 ```sh
-npx --no-install kakao-headless chats --search 'Exact room name' --ack-risk
-npx --no-install kakao-headless history 'CHAT_ID' --count 30 --ack-risk
+npx --no-install kakao-headless auth refresh --ack-risk
 ```
 
-Pass decimal ID strings exactly; do not convert chat/log IDs to JavaScript numbers. History uses strict forward paging internally, returns the latest requested count from the fetched range, and fails explicitly if its 50-page cap is reached. `--from LOG_ID` is an exclusive lower cursor, **not** a before/older cursor. No output is not proof that an entire account has no messages.
+Refresh preflights encrypted persistence before requesting a new token. The existing Keychain root remains unchanged; no Keychain permission weakening is required.
+
+## Read rooms and messages
+
+```sh
+npx --no-install kakao-headless chats --search 'Room name' --ack-risk
+npx --no-install kakao-headless history 'CHAT_ID' --count 30 --ack-risk
+npx --no-install kakao-headless history 'CHAT_ID' --from 'LOG_ID' --count 30 --ack-risk
+```
+
+IDs are exact decimal **strings**, never JavaScript numbers. `--from` is an exclusive lower cursor, not a before/older cursor. Reads do not issue mark-read, typing or room-entry commands, although a live login can affect session/presence state. History fails explicitly if its bounded page scan cannot finish.
 
 ## Preview and send
 
 ```sh
 printf '%s' 'This is one test message. No reply needed.' > message.txt
 npx --no-install kakao-headless preview 'CHAT_ID' --text-file message.txt --ack-risk
-# Review exact room/member IDs/text in the JSON. Then explicitly authorize:
+# Check the returned recipient, members and exact text before confirming:
 npx --no-install kakao-headless send 'PREVIEW_UUID' --confirm --ack-risk
 npx --no-install kakao-headless receipt 'PREVIEW_UUID'
 ```
 
-The preview does not send. File bytes are preserved, including trailing newlines. Text is limited to 4,000 UTF-8 bytes. Room changes or a different account invalidate approval. Known recipient IDs should be independently verified; a display name alone is not identity proof.
+A preview expires after ten minutes and is bound to the account, room, members and exact text. The 4,000-byte text limit is measured in UTF-8; trailing newlines are preserved.
 
-**Never automatically retry an unknown or unverified result.** Inspect the room with an independent reader. A crash after reservation permanently consumes that preview, even if no bytes were sent. This provides **at-most-one local attempt per preview**, not exactly-once delivery. Creating a fresh preview, deleting state, using another state directory, or another client bypasses that deduplication boundary.
+A durable reservation is written **before** the network call. Connection loss, crashes or an ambiguous response do not cause an automatic retry. This is at-most-one local attempt per preview, not a guarantee of exactly-once delivery. Deleting state or creating another preview is outside that duplicate-protection boundary.
 
-Exit codes: `0` for successful commands / history-verified send, `1` for validation/runtime failures, `2` for a send result that is not history-verified. A nonzero exit after `send` is **not** permission to retry.
+### Reconcile an ambiguous result
 
-State defaults to `~/.local/state/kakao-headless` (directory 0700, JSON files 0600). It contains plaintext previews/message text and nonsecret provider sync metadata. Keep it local and private. `--state-dir` must point to a trusted private directory. No HTTP server or listening port is opened.
+First find the exact own-message log ID in history, then:
 
-## Aside use
+```sh
+npx --no-install kakao-headless reconcile 'PREVIEW_UUID' --log-id 'LOG_ID' --ack-risk
+npx --no-install kakao-headless receipt 'PREVIEW_UUID'
+```
 
-The bundled [skill](skills/kakao-headless/SKILL.md) describes the CLI workflow. Install the tool into a stable local directory and add the skill under your Aside account's user skills. It does not modify or claim write support for the built-in `kakaotalk` REPL global. A live test is blocked until local authentication and recipient identity verification are complete.
+Reconciliation is **read-only**. It checks the account, recipient, log ID, text, message type and attempt-time window. Separate verification evidence is added without rewriting the original response or sending again.
+
+| Result | Meaning |
+|---|---|
+| `verified` | Send response and exact own-history entry matched |
+| `accepted_unverified` | Response accepted; history not yet confirmed |
+| `unknown` | Response lost or malformed; do not retry |
+| `rejected` | Explicit rejection or a pre-write validation failure |
+| `verification.status: history_verified` | Follow-up history verification succeeded; original response is preserved |
+
+These are not recipient delivery/read receipts. Exit `0` means the command succeeded, `1` means validation/runtime failure, and `2` means a send did not reach history-verified status. A nonzero send exit is never an instruction to retry.
+
+## Aside integration
+
+Copy the bundled skill into the user skills directory for your Aside account:
+
+```sh
+mkdir -p /path/to/aside/account/skills/user/kakao-headless
+cp node_modules/@jsap0914/kakao-headless/skills/kakao-headless/SKILL.md \
+  /path/to/aside/account/skills/user/kakao-headless/SKILL.md
+```
+
+Set the installed CLI path in that skill. Agents use the CLI for room lookup, previews, approved sends and receipts. This is a separate integration; it does not add a send method to Aside's built-in `kakaotalk` REPL global.
+
+## Storage and limits
+
+State defaults to `~/.local/state/kakao-headless`; use `--state-dir` only with a trusted private directory. State is mode `0700`, files `0600`. Previews contain plaintext message text and member IDs. Rotated credentials are encrypted. Back up the Keychain root and encrypted credential file together; removing the root can make that file unreadable. Never commit private state.
+
+`auth import --ack-risk` accepts an already authorized credential object on stdin only. `auth logout` deletes local credentials, not the server session, and reports an error if the OS refuses deletion. Serialize credential-changing commands; concurrent refreshes across processes are not supported.
+
+Text messages in existing rooms are the supported write scope. Attachments, quoted replies, new-room creation, push listeners, typing, explicit mark-read and room leaving are not exposed by this CLI.
 
 ## Development
 
 ```sh
 npm ci --ignore-scripts
 npm test
-# Optional: install the pinned provider explicitly before this offline contract test
+# With the pinned optional provider installed:
 TEST_PROVIDER=1 npm test
 ```
 
-Tests cover two-stage auth, safe Keychain subprocess handling, ID precision, member changes, expiry, concurrent sends, durable reservations, status validation, connection-loss ambiguity, strict history paging and verification mismatch. CI never logs in to Kakao or sends messages. See [SPEC](docs/SPEC.md), [SECURITY](SECURITY.md), and [third-party notes](THIRD_PARTY.md).
+CI runs on macOS/Linux with Node 22/24 and exercises the real provider's offline API/codec contracts. CI has no account credentials and never sends messages.
+
+[Architecture](docs/SPEC.md) · [Security](SECURITY.md) · [Validation](docs/VALIDATION.md) · [MIT license](LICENSE)

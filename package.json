@@ -1,17 +1,51 @@
 {
   "name": "@jsap0914/kakao-headless",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Experimental UI-free KakaoTalk read/write bridge with guarded single-attempt sends",
   "type": "module",
   "license": "MIT",
-  "engines": { "node": ">=22.13.0" },
-  "bin": { "kakao-headless": "src/cli.mjs" },
-  "exports": { ".": "./src/guard.mjs", "./transport": "./src/transport.mjs", "./auth": "./src/auth.mjs" },
-  "files": ["src", "docs", "skills", "README.md", "LICENSE", "THIRD_PARTY.md", "SECURITY.md"],
-  "scripts": { "test": "node --test test/*.test.mjs", "check": "node --check src/cli.mjs && npm test", "prepack": "npm test" },
-  "dependencies": { "bson": "6.10.4" },
-  "peerDependencies": { "agent-messenger": "2.37.1" },
-  "peerDependenciesMeta": { "agent-messenger": { "optional": true } },
-  "repository": { "type": "git", "url": "https://github.com/JSap0914/kakao-headless.git" },
-  "bugs": { "url": "https://github.com/JSap0914/kakao-headless/issues" }
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "bin": {
+    "kakao-headless": "src/cli.mjs"
+  },
+  "exports": {
+    ".": "./src/guard.mjs",
+    "./transport": "./src/transport.mjs",
+    "./auth": "./src/auth.mjs",
+    "./credentials": "./src/credential-vault.mjs"
+  },
+  "files": [
+    "src",
+    "docs",
+    "skills",
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY.md",
+    "SECURITY.md"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "check": "node --check src/cli.mjs && npm test",
+    "prepack": "npm test"
+  },
+  "dependencies": {
+    "bson": "6.10.4"
+  },
+  "peerDependencies": {
+    "agent-messenger": "2.37.1"
+  },
+  "peerDependenciesMeta": {
+    "agent-messenger": {
+      "optional": true
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/JSap0914/kakao-headless.git"
+  },
+  "bugs": {
+    "url": "https://github.com/JSap0914/kakao-headless/issues"
+  }
 }

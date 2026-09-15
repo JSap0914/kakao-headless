@@ -1,4 +1,4 @@
-# v0.1 protocol adapter specification
+# v0.1.1 protocol adapter specification
 
 ## Scope
 
@@ -11,7 +11,10 @@ automation, no modification of Aside internals, and no public relay service.
 1. `auth begin`: nonforced tablet login. If needed, request challenge and return
    immediately. Pending email/device UUID/expiry go into Keychain, not password.
 2. `auth finish`: after phone confirmation, register then login. Save OAuth token
-   and refresh token in Keychain; remove pending state.
+   and refresh token in Keychain for initial registration; remove pending state.
+   Later token rotations use an AES-256-GCM local envelope rooted in that Keychain
+   secret, with HKDF salt and account/device authenticated context. Root mutation
+   is not required; corruption or changed/missing roots fail closed.
 3. `preview`: read exact room and a complete stable member snapshot. Save exact
    text, account, chat ID, recipient fingerprint, creation and expiry timestamps.
 4. `send --confirm`: validate preview and re-resolve recipient. Open exclusive
@@ -21,6 +24,9 @@ automation, no modification of Aside internals, and no public relay service.
 6. Inspect packet and body status plus exact BSON/string log ID. Persist accepted
    outcome before attempting history verification. Never replay after an error.
 7. `receipt`: offline retrieval. Orphan reservation means unknown, not unsent.
+8. `reconcile PREVIEW --log-id ID`: read-only own-history validation using original
+   account, recipient, exact text, type and attempt-time window. Store a separate
+   verification file; preserve original response evidence and block future retries.
 
 ## Identity and precision
 
@@ -50,7 +56,7 @@ Exact history match: verified, never 'read' or 'delivered to recipient'.
 There is no exactly-once claim and no retry queue. Independent clients or new
 previews are outside the deduplication boundary.
 
-## Live acceptance checklist (not yet executed)
+## Live acceptance criteria
 
 - Dedicated test account completes registration and reads its existing rooms.
 - Resolve desired test recipient by exact ID and confirm complete membership.
@@ -61,4 +67,5 @@ previews are outside the deduplication boundary.
 - Independently verify the message in the read connector or receiving account.
 - Record only redacted outcome, never credentials/private message history.
 
-Release tests are mock and offline provider-contract tests, not this checklist.
+The automated suite remains mock/offline provider-contract testing. See VALIDATION.md
+for the separately recorded real-account checks, including one direct-room send.

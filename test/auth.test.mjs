@@ -25,3 +25,12 @@ test('refresh persists rotated credentials and returns no token',async()=>{
  assert.deepEqual(result,{refreshed:true,user_id:'1'});assert.equal(f.entries.get('account').refresh_token,'new-refresh');
 });
 test('logout accurately reports no remote revoke',async()=>{const f=fixture();f.entries.set('account',{});const r=await new Auth(f).logout();assert.equal(r.server_session_revoked,false);assert.equal(f.entries.size,0);});
+
+test('refresh aborts before remote rotation if credential store cannot update',async()=>{
+ let calls=0;const vault={get:async()=>({oauth_token:'fixture-old',refresh_token:'fixture-refresh',user_id:'1',device_uuid:'fixture-device',device_type:'tablet'}),set:async()=>{throw Error('denied');}};
+ await assert.rejects(new Auth({vault,provider:{refreshKakaoOAuthToken:async()=>{calls++;}}}).refresh(),{code:'CREDENTIAL_STORE_UNWRITABLE'});assert.equal(calls,0);
+});
+test('refresh checks persistence before calling provider and stores the rotated token afterwards',async()=>{
+ const f=fixture();f.entries.set('account',{oauth_token:'fixture-old',refresh_token:'fixture-refresh',user_id:'1',device_uuid:'fixture-device',device_type:'tablet'});const order=[];const original=f.vault.set;f.vault.set=async(k,v)=>{order.push('store');await original(k,v);};
+ await new Auth({...f,provider:{refreshKakaoOAuthToken:async()=>{order.push('rotate');return{accessToken:'fixture-new',refreshToken:'fixture-new-refresh'};}}}).refresh();assert.deepEqual(order,['store','rotate','store']);
+});

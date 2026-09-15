@@ -12,6 +12,10 @@ function id(value) {
   if (typeof value !== 'string' || !/^[1-9][0-9]*$/.test(value) || value.length > 19 || BigInt(value) > MAX_ID) fail('INVALID_ID');
   return value;
 }
+function echoedChatId(value) {
+  if (typeof value === 'number' && Number.isSafeInteger(value) && value > 0) value = String(value);
+  return id(value);
+}
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 async function syncDir(dir) { const h = await fs.open(dir, 'r'); try { await h.sync(); } finally { await h.close(); } }
 async function atomic(file, value) {
@@ -63,19 +67,7 @@ export class SendGuard {
     catch { fail('STATE_UNAVAILABLE'); }
     return record;
   }
-  async receipt(previewId) {
-    const receiptFile = this._file(previewId, 'receipt');
-    try { return JSON.parse(await fs.readFile(receiptFile, 'utf8')); }
-    catch (e) { if (e.code !== 'ENOENT') fail('STATE_UNAVAILABLE'); }
-    return this._read(this._file(previewId, 'reservation'), 'RECEIPT_NOT_FOUND');
-  }
-  async send(previewId) {
-    const previewFile = this._file(previewId, 'preview');
-    const reservation = this._file(previewId, 'reservation');
-    // A prior reservation always wins, regardless of its result or age.
-    try { await fs.stat(reservation); fail('ALREADY_ATTEMPTED'); }
-    catch (e) { if (e.code !== 'ENOENT') { if (e.code === 'ALREADY_ATTEMPTED') throw e; fail('STATE_UNAVAILABLE'); } }
-    const p = await this._read(previewFile, 'PREVIEW_NOT_FOUND');
+  _validatePreview(p, previewId) {
     try {
       if (!p || p.version !== 1 || p.previewId !== previewId ||
           typeof p.chatId !== 'string' || id(p.chatId) !== p.chatId ||
@@ -88,6 +80,82 @@ export class SendGuard {
           new Set(p.memberIds).size !== p.memberIds.length || JSON.stringify(p.memberIds) !== JSON.stringify([...p.memberIds].sort()) ||
           p.fingerprint !== hash({ chatId: p.chatId, title: p.title, displayName: p.displayName, type: p.type, members: p.memberIds })) fail('INVALID_PREVIEW');
     } catch { fail('INVALID_PREVIEW'); }
+  }
+  async receipt(previewId) {
+    const receiptFile = this._file(previewId, 'receipt');
+    let base;
+    try { base = JSON.parse(await fs.readFile(receiptFile, 'utf8')); }
+    catch (e) { if (e.code !== 'ENOENT') fail('STATE_UNAVAILABLE'); }
+    if (base === undefined) base = await this._read(this._file(previewId, 'reservation'), 'RECEIPT_NOT_FOUND');
+    const verification = await this._verification(previewId);
+    return verification === undefined ? base : { ...base, verification };
+  }
+  async _verification(previewId) {
+    try { return JSON.parse(await fs.readFile(this._file(previewId, 'verification'), 'utf8')); }
+    catch (e) { if (e.code !== 'ENOENT') fail('STATE_UNAVAILABLE'); }
+  }
+  async reconcile(previewId, logId) {
+    // No send, reservation acquisition, or mutation of the original evidence.
+    logId = id(logId);
+    const reservation = await this._read(this._file(previewId, 'reservation'), 'RESERVATION_NOT_FOUND');
+    const p = await this._read(this._file(previewId, 'preview'), 'PREVIEW_NOT_FOUND');
+    this._validatePreview(p, previewId);
+    if (!reservation || reservation.previewId !== previewId || reservation.chatId !== p.chatId ||
+        reservation.status !== 'unknown' || reservation.code !== 'ATTEMPT_RESERVED' ||
+        !Number.isSafeInteger(reservation.attemptedAt) || reservation.attemptedAt < p.createdAt ||
+        reservation.attemptedAt >= p.expiresAt) fail('INVALID_RESERVATION');
+    const account = () => { if (this._identity() !== p.identity) fail('ACCOUNT_CHANGED'); };
+    account();
+    const room = await this._room(p.chatId);
+    account();
+    if (room.fingerprint !== p.fingerprint) fail('RECIPIENT_CHANGED');
+    const original = await this.receipt(previewId);
+    account();
+    if (!original || original.previewId !== previewId || original.chatId !== p.chatId ||
+        original.attemptedAt !== reservation.attemptedAt || typeof original.status !== 'string' ||
+        typeof original.code !== 'string') fail('STATE_UNAVAILABLE');
+    if (original.verification !== undefined) {
+      const v = original.verification;
+      if (!v || v.status !== 'history_verified' || v.code !== 'HISTORY_RECONCILED' ||
+          v.chatId !== p.chatId || v.originalStatus !== original.status || v.originalCode !== original.code ||
+          !Number.isSafeInteger(v.checkedAt)) fail('STATE_UNAVAILABLE');
+      if (v.logId !== logId) fail('VERIFICATION_LOG_MISMATCH');
+      return v;
+    }
+    let messages;
+    try { messages = await this.transport.getMessages(p.chatId, { count: 200 }); }
+    catch { fail('HISTORY_UNAVAILABLE'); }
+    account();
+    if (!Array.isArray(messages)) fail('HISTORY_UNAVAILABLE');
+    const matches = messages.filter(m => { try { return id(m?.log_id) === logId; } catch { return false; } });
+    if (matches.length === 0) fail('HISTORY_NOT_FOUND');
+    if (matches.length !== 1) fail('HISTORY_AMBIGUOUS');
+    const m = matches[0];
+    try {
+      if (id(m.author_id) !== p.identity || m.message !== p.text || m.type !== 1 ||
+          !Number.isSafeInteger(m.sent_at) || m.sent_at < Math.floor(reservation.attemptedAt / 1000) ||
+          m.sent_at > Math.ceil(reservation.attemptedAt / 1000) + 120) fail('HISTORY_MISMATCH');
+      for (const key of ['chat_id', 'chatId']) {
+        if (m[key] !== undefined && id(m[key]) !== p.chatId) fail('HISTORY_MISMATCH');
+      }
+    } catch { fail('HISTORY_MISMATCH'); }
+    account();
+    const checkedAt = this._time();
+    if (!Number.isSafeInteger(checkedAt) || checkedAt < reservation.attemptedAt) fail('INVALID_CLOCK');
+    const verification = { status: 'history_verified', code: 'HISTORY_RECONCILED', logId,
+      chatId: p.chatId, checkedAt, originalStatus: original.status, originalCode: original.code };
+    try { await atomic(this._file(previewId, 'verification'), verification); }
+    catch { fail('STATE_UNAVAILABLE'); }
+    return verification;
+  }
+  async send(previewId) {
+    const previewFile = this._file(previewId, 'preview');
+    const reservation = this._file(previewId, 'reservation');
+    // A prior reservation always wins, regardless of its result or age.
+    try { await fs.stat(reservation); fail('ALREADY_ATTEMPTED'); }
+    catch (e) { if (e.code !== 'ENOENT') { if (e.code === 'ALREADY_ATTEMPTED') throw e; fail('STATE_UNAVAILABLE'); } }
+    const p = await this._read(previewFile, 'PREVIEW_NOT_FOUND');
+    this._validatePreview(p, previewId);
     const valid = () => {
       const time = this._time();
       if (!Number.isFinite(p.expiresAt) || time >= p.expiresAt || time < p.createdAt) fail('PREVIEW_EXPIRED');
@@ -121,13 +189,13 @@ export class SendGuard {
     try {
       const packetStatus = response?.statusCode;
       const bodyStatus = response?.body?.status;
-      if (!Number.isFinite(packetStatus) || (bodyStatus !== undefined && !Number.isFinite(bodyStatus))) return await save('unknown', 'INVALID_RESPONSE');
+      if (!Number.isSafeInteger(packetStatus) || (bodyStatus !== undefined && !Number.isSafeInteger(bodyStatus))) return await save('unknown', 'INVALID_RESPONSE');
       if (packetStatus === -1) return await save('unknown', 'NETWORK_FAILURE');
       if (packetStatus !== 0 || (bodyStatus !== undefined && bodyStatus !== 0)) return await save('rejected', 'PROVIDER_REJECTED');
       logId = id(response.body?.logId);
       for (const key of ['chatId', 'chat_id']) {
-        if (response.body[key] !== undefined && id(response.body[key]) !== p.chatId) return await save('unknown', 'RESPONSE_CHAT_MISMATCH');
-        if (response[key] !== undefined && id(response[key]) !== p.chatId) return await save('unknown', 'RESPONSE_CHAT_MISMATCH');
+        if (response.body[key] !== undefined && echoedChatId(response.body[key]) !== p.chatId) return await save('unknown', 'RESPONSE_CHAT_MISMATCH');
+        if (response[key] !== undefined && echoedChatId(response[key]) !== p.chatId) return await save('unknown', 'RESPONSE_CHAT_MISMATCH');
       }
     } catch (e) { if (e.code === 'STATE_UNAVAILABLE') throw e; return save('unknown', 'INVALID_RESPONSE'); }
     // Persist acceptance before the optional history read.

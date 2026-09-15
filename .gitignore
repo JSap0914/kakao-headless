@@ -9,3 +9,5 @@ node_modules/
 provider-cache/
 coverage/
 message.txt
+*.verification.json
+credentials.enc.json

@@ -36,6 +36,10 @@ export class Auth {
   async refresh() {
     const old = validAccount(await this.vault.get('account'));
     if (!old.refresh_token) fail('NO_REFRESH_TOKEN');
+    // Check local update permission before requesting a remote token rotation.
+    // This avoids discarding a new token when the OS rejects Keychain updates.
+    try { await this.vault.set('account', old); }
+    catch { fail('CREDENTIAL_STORE_UNWRITABLE'); }
     const next = await this.provider.refreshKakaoOAuthToken({ accessToken: old.oauth_token, refreshToken: old.refresh_token, deviceUuid: old.device_uuid });
     await this.vault.set('account', validAccount({ ...old, oauth_token: next.accessToken, refresh_token: next.refreshToken }));
     return { refreshed: true, user_id: old.user_id };
