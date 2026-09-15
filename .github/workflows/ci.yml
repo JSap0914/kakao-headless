@@ -1,0 +1,39 @@
+name: CI
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  tests:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        node: [22, 24]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm test
+      - run: node src/cli.mjs doctor
+      - if: runner.os == 'macOS'
+        run: swiftc -typecheck src/keychain.swift
+      - run: npm pack --ignore-scripts --dry-run
+  provider-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --ignore-scripts
+      - name: Install isolated optional provider (no lifecycle scripts)
+        run: |
+          mkdir -p "$RUNNER_TEMP/provider"
+          echo '{"private":true,"dependencies":{"agent-messenger":"2.37.1"}}' > "$RUNNER_TEMP/provider/package.json"
+          npm install --prefix "$RUNNER_TEMP/provider" --ignore-scripts --omit=optional
+          ln -s "$RUNNER_TEMP/provider/node_modules/agent-messenger" node_modules/agent-messenger
+      - name: Offline actual-provider contract tests (no credentials or network calls)
+        run: TEST_PROVIDER=1 npm test
