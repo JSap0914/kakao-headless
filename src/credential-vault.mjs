@@ -104,11 +104,11 @@ export class CredentialVault {
         (process.getuid && stat.uid !== process.getuid())) throw failure();
     return true;
   }
-  async #read() {
+  async #read(file = this.#file) {
     if (!await this.#directory()) return null;
     let handle;
     try {
-      handle = await fs.open(this.#file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+      handle = await fs.open(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
     try {
       const stat = await handle.stat();
@@ -137,13 +137,27 @@ export class CredentialVault {
     rootAccount(root);
     return { root, value: record === null ? root : decrypt(record, root) };
   }
+  #pending(value) {
+    if (!object(value) || Object.keys(value).sort().join(',') !== 'deviceUuid,email,expiresAt' ||
+        typeof value.email !== 'string' || !value.email.includes('@') || value.email.length > 320 ||
+        typeof value.deviceUuid !== 'string' || !/^[A-Za-z0-9_-]{8,128}$/.test(value.deviceUuid) ||
+        !Number.isSafeInteger(value.expiresAt) || value.expiresAt <= 0) throw failure();
+    return value;
+  }
   async #get(key) {
-    if (key === 'pending') return this.#root.get(key);
+    if (key === 'pending') {
+      const text = await this.#read(path.join(this.#dir, 'pending-login.json'));
+      return text === null ? null : this.#pending(JSON.parse(text));
+    }
     if (key !== 'account') throw failure();
     return (await this.#load()).value;
   }
   async #set(key, value) {
-    if (key === 'pending') return this.#root.set(key, value);
+    if (key === 'pending') {
+      const pending = this.#pending(value);
+      await this.#write(JSON.stringify(pending), path.join(this.#dir, 'pending-login.json'));
+      return;
+    }
     if (key !== 'account') throw failure();
     const { root } = await this.#load();
     // Check both the supplied object and its JSON representation (including toJSON).
@@ -176,7 +190,7 @@ export class CredentialVault {
     if (!(bytes instanceof Uint8Array) || bytes.length !== size) throw failure();
     return Buffer.from(bytes);
   }
-  async #write(record) {
+  async #write(record, file = this.#file) {
     await this.#directory(true);
     const temp = path.join(this.#dir, `.credentials-${secureRandomBytes(16).toString('hex')}.tmp`);
     let handle;
@@ -188,7 +202,7 @@ export class CredentialVault {
       await handle.sync();
       await handle.close();
       handle = null;
-      await fs.rename(temp, this.#file);
+      await fs.rename(temp, file);
       await this.#syncDirectory();
     } finally {
       await handle?.close();
@@ -200,7 +214,14 @@ export class CredentialVault {
     try { await handle.sync(); } finally { await handle.close(); }
   }
   async #delete(key) {
-    if (key === 'pending') return this.#root.delete(key);
+    if (key === 'pending') {
+      if (await this.#directory()) {
+        try { await fs.unlink(path.join(this.#dir, 'pending-login.json')); }
+        catch (error) { if (error.code !== 'ENOENT') throw error; }
+        await this.#syncDirectory();
+      }
+      return;
+    }
     if (key !== 'account') throw failure();
     // Never reveal the stale root by deleting the sidecar before Keychain succeeds.
     await this.#root.delete('account');

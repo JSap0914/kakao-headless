@@ -47,7 +47,7 @@ npx --no-install kakao-headless auth begin --email YOU@example.com --ack-risk
 npx --no-install kakao-headless auth finish --ack-risk
 ```
 
-Passwords are prompted without echo and are never persisted. Keep passwords and registration codes out of chat, shell arguments, logs and GitHub. Device registration does not force-replace an occupied device slot.
+Passwords are prompted without echo and are never persisted. Keep passwords and registration codes out of chat, shell arguments, logs and GitHub. Device registration does not force-replace an occupied device slot. Initial setup requires macOS permission to create the Keychain item; local logout requires permission to delete it. Existing-account reads and refresh do not modify that item.
 
 ```sh
 npx --no-install kakao-headless auth refresh --ack-risk

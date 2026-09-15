@@ -9,7 +9,9 @@ automation, no modification of Aside internals, and no public relay service.
 ## State machine
 
 1. `auth begin`: nonforced tablet login. If needed, request challenge and return
-   immediately. Pending email/device UUID/expiry go into Keychain, not password.
+   immediately. Pending email/device UUID/expiry use private local metadata,
+   never the password or phone code. Completing registration can clear this
+   metadata without mutating Keychain.
 2. `auth finish`: after phone confirmation, register then login. Save OAuth token
    and refresh token in Keychain for initial registration; remove pending state.
    Later token rotations use an AES-256-GCM local envelope rooted in that Keychain
