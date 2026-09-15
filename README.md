@@ -12,8 +12,6 @@ Kakao Headless lets your agent find conversations, read messages, prepare replie
 
 **Use it directly from the terminal, or connect it to Aside with the included skill.** If you already use Aside, follow the setup below and install the skill so Aside can use the CLI for you.
 
-This is an independent community integration, not an official Kakao or Aside product. Unofficial access may lead to Kakao account restrictions; start with a test account.
-
 ## Setup
 
 You need **macOS**, **Node.js 22.13+**, and Apple command-line tools (`xcode-select --install`). For the Aside integration, have Aside installed and a local account set up first.
