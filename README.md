@@ -141,14 +141,6 @@ The `@jsap0914` package scope identifies the publisher. **It does not connect an
 
 Back up the Keychain root and encrypted credentials together. `auth logout` deletes local credentials, not the remote session, and requires Keychain deletion permission. Serialize credential-changing commands; concurrent refreshes across processes are unsupported.
 
-## Tested scope and limits
-
-Real-account checks cover room lookup, history, forward paging, one direct-room text send, read-only reconciliation, token rotation, encrypted persistence and fresh-process reconnection. CI runs core tests on macOS/Linux with Node 22/24 and offline contracts against the actual pinned provider. CI never authenticates or sends messages.
-
-Text and single-image writes in existing rooms are supported. Live checks cover one direct-room text send and one PNG photo send, including fresh-process reconciliation and an independent SHA-256 check of the uploaded image. JPEG support has offline fixtures, not a live-send result. Attachments beyond that one image, captions, galleries, video, audio, file uploads, quoted replies, new rooms, push listeners, typing, explicit mark-read and room leaving are not CLI features. Read sessions may still affect online presence/session state. IDs must remain exact decimal strings; `--from` is an exclusive lower cursor, not an older-message cursor. History fails explicitly if its bounded scan cannot finish.
-
-The first live text send had an ambiguous response and was confirmed from own history. Parser fixes have wire-format regression coverage; a second live text message was not sent just to repeat that test. See [validation details](docs/VALIDATION.md).
-
 ## Requirements
 
 - macOS for real-account use and Keychain access
