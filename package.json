@@ -1,7 +1,7 @@
 {
   "name": "@jsap0914/kakao-headless",
-  "version": "0.1.1",
-  "description": "Experimental UI-free KakaoTalk read/write bridge with guarded single-attempt sends",
+  "version": "0.2.0",
+  "description": "Read, approve and send KakaoTalk from your agent. Community integration for Aside.",
   "type": "module",
   "license": "MIT",
   "engines": {
@@ -23,7 +23,8 @@
     "README.md",
     "LICENSE",
     "THIRD_PARTY.md",
-    "SECURITY.md"
+    "SECURITY.md",
+    "assets"
   ],
   "scripts": {
     "test": "node --test test/*.test.mjs",

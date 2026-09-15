@@ -1,0 +1,13 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {spawnSync} from 'node:child_process';
+import {mkdtemp,rm,readFile,writeFile} from 'node:fs/promises';
+import {join} from 'node:path';
+import {tmpdir} from 'node:os';
+import {fileURLToPath} from 'node:url';
+const cli=fileURLToPath(new URL('../src/cli.mjs',import.meta.url));
+const run=(args)=>{const r=spawnSync(process.execPath,[cli,...args],{encoding:'utf8',timeout:15000});return{status:r.status,data:JSON.parse(r.stdout)};};
+test('Aside CLI install, doctor and uninstall run offline against explicit account',async t=>{const dir=await mkdtemp(join(tmpdir(),'kh-aside-cli-'));t.after(()=>rm(dir,{recursive:true,force:true}));const flags=['--account','7','--account-root',dir];let r=run(['aside','install',...flags]);assert.equal(r.status,0);assert.equal(r.data.status,'installed');r=run(['aside','doctor',...flags]);assert.equal(r.data.status,'installed');assert.equal(r.data.managed,true);assert.match(await readFile(join(dir,'skills/user/kakao-headless/SKILL.md'),'utf8'),/Generated Aside runtime/);r=run(['aside','uninstall',...flags]);assert.equal(r.data.status,'uninstalled');});
+test('Aside CLI requires explicit account',()=>{const r=run(['aside','install']);assert.equal(r.status,1);assert.equal(r.data.error,'INVALID_ACCOUNT');});
+test('Aside CLI preserves edited skill',async t=>{const dir=await mkdtemp(join(tmpdir(),'kh-aside-cli-'));t.after(()=>rm(dir,{recursive:true,force:true}));const flags=['--account','0','--account-root',dir];const a=run(['aside','install',...flags]);await writeFile(a.data.skillPath,'custom operator instructions');const r=run(['aside','install',...flags]);assert.equal(r.data.status,'preserved');assert.equal(await readFile(a.data.skillPath,'utf8'),'custom operator instructions');});
+test('Aside CLI rejects unsupported actions before touching an account',()=>{const r=run(['aside','reset','--account','0']);assert.equal(r.status,1);assert.equal(r.data.error,'INVALID_COMMAND');});

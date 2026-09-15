@@ -5,13 +5,17 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { emitKeypressEvents } from 'node:readline';
 import { CredentialVault } from './credential-vault.mjs';
+import { installAside, doctorAside, uninstallAside } from './aside-integration.mjs';
 import { Auth } from './auth.mjs';
 import { SendGuard } from './guard.mjs';
 import { LocoTransport, loadProvider, validAccount, fail, SUPPORTED_VERSION } from './transport.mjs';
 
-const HELP = `kakao-headless 0.1.1 (experimental, macOS Keychain)
+const HELP = `kakao-headless 0.2.0 (community integration, macOS Keychain)
 
   doctor                              Offline runtime/provider check
+  aside install --account N            Connect this CLI to an Aside account
+  aside doctor --account N             Check the managed Aside skill
+  aside uninstall --account N          Remove only unchanged managed skill files
   auth begin --email EMAIL --ack-risk  Hidden password prompt; phone registration
   auth finish --ack-risk              Finish after confirming code on phone
   auth import --ack-risk              Read credential JSON from stdin into Keychain
@@ -58,13 +62,19 @@ try {
   const { values: flags, positionals: args } = parseArgs({ allowPositionals: true, strict: true, options: {
     help: {type:'boolean',short:'h'}, 'ack-risk': {type:'boolean'}, confirm: {type:'boolean'},
     email:{type:'string'}, search:{type:'string'}, count:{type:'string'}, from:{type:'string'},
-    'text-file':{type:'string'}, 'state-dir':{type:'string'}, 'log-id':{type:'string'}
+    'text-file':{type:'string'}, 'state-dir':{type:'string'}, 'log-id':{type:'string'},
+    account:{type:'string'}, 'account-root':{type:'string'}
   } });
   const [command, target] = args;
   if (flags.help || !command) { console.log(HELP); }
   else if (command === 'doctor') {
     let provider = 'missing'; try { await loadProvider(); provider = SUPPORTED_VERSION; } catch(e) { provider = e.code; }
-    out({ version:'0.1.1', node:process.version, platform:process.platform, keychain_supported:process.platform==='darwin', provider, live_connection_checked:false, credential_status:'not_checked', aside_builtin_modified:false });
+    out({ version:'0.2.0', node:process.version, platform:process.platform, keychain_supported:process.platform==='darwin', provider, live_connection_checked:false, credential_status:'not_checked', aside_builtin_modified:false });
+  } else if (command === 'aside') {
+    if (args.length !== 2 || !['install','doctor','uninstall'].includes(target)) fail('INVALID_COMMAND');
+    const options = { account: flags.account, accountRoot: flags['account-root'], version:'0.2.0' };
+    const operation = { install:installAside, doctor:doctorAside, uninstall:uninstallAside }[target];
+    out(await operation(options));
   } else {
     const known = ['auth','chats','history','preview','send','receipt','reconcile'];
     if (!known.includes(command) || args.length > 2 || (command==='chats' && target)) fail('INVALID_COMMAND');
