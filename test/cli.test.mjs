@@ -23,3 +23,13 @@ test('receipt works offline with no provider or account requirement',async()=>{
 test('receipt traversal is rejected',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'kh-cli-'));try{const r=run(['receipt','../../etc/passwd','--state-dir',dir]);assert.equal(r.status,1);assert.equal(r.json.error,'INVALID_PREVIEW_ID');}finally{await rm(dir,{recursive:true,force:true});}
 });
+
+test('image preview accepts exactly one content flag before credentials or network',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'kh-image-cli-'));try{
+  const base=['--ack-risk','--state-dir',dir];
+  let r=run(['preview','42',...base]);assert.equal(r.status,1);assert.equal(r.json.error,'CONTENT_FILE_REQUIRED');
+  r=run(['preview','42','--text-file','text.txt','--image-file','image.png',...base]);assert.equal(r.status,1);assert.equal(r.json.error,'EXACTLY_ONE_CONTENT_FILE_REQUIRED');
+  r=run(['history','42','--image-file','image.png',...base]);assert.equal(r.status,1);assert.equal(r.json.error,'CONTENT_FILE_ONLY_FOR_PREVIEW');
+  r=run(['preview','42','--image-file','image.png','--state-dir',dir]);assert.equal(r.json.error,'ACKNOWLEDGE_UNOFFICIAL_ACCOUNT_RISK');
+ }finally{await rm(dir,{recursive:true,force:true});}
+});

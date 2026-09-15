@@ -2,14 +2,14 @@
 
 # Kakao Headless
 
-**Read KakaoTalk, approve a message, and let your agent send it. No app UI automation.**
+**Read KakaoTalk, approve text or one image, and let your agent make one guarded send attempt. No app UI automation.**
 
 [![CI](https://github.com/JSap0914/kakao-headless/actions/workflows/ci.yml/badge.svg)](https://github.com/JSap0914/kakao-headless/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/JSap0914/kakao-headless?include_prereleases&label=release)](https://github.com/JSap0914/kakao-headless/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![macOS](https://img.shields.io/badge/platform-macOS-black)](#requirements)
 
-Kakao Headless connects a local agent to existing KakaoTalk rooms through a CLI. Find the right conversation, read its messages, review the recipient and text, then make one guarded send attempt. If a response is ambiguous, verify the history instead of sending again.
+Kakao Headless connects a local agent to existing KakaoTalk rooms through a CLI. Find the right conversation, read its messages, review the recipient and approved text or image, then make one guarded send attempt. If a response is ambiguous, verify history instead of sending again.
 
 It uses the pinned `agent-messenger` LOCO provider and adds credential storage, recipient checks, send reservations and verification. A community integration for Aside, not an official Kakao or Aside product.
 
@@ -19,7 +19,7 @@ It uses the pinned `agent-messenger` LOCO provider and adds credential storage, 
 
 ```sh
 npm install -g --ignore-scripts \
-  https://github.com/JSap0914/kakao-headless/releases/download/v0.2.1/jsap0914-kakao-headless-0.2.1.tgz \
+  https://github.com/JSap0914/kakao-headless/releases/download/v0.3.0/jsap0914-kakao-headless-0.3.0.tgz \
   agent-messenger@2.37.1
 kakao-headless doctor
 ```
@@ -62,8 +62,9 @@ Passwords are entered without echo and are never saved. Keep passwords and phone
 | `chats --search NAME` | Find existing rooms by name |
 | `history CHAT_ID --count 30` | Read messages without issuing mark-read commands |
 | `history CHAT_ID --from LOG_ID` | Read forward from an exact message ID |
-| `preview CHAT_ID --text-file FILE` | Bind an approval preview to account, room, members and exact text |
-| `send PREVIEW_ID --confirm` | Reserve the attempt durably, then invoke WRITE once |
+| `preview CHAT_ID --text-file FILE --ack-risk` | Bind an approval preview to account, room, members and exact text |
+| `preview CHAT_ID --image-file FILE --ack-risk` | Validate and privately copy one eligible image, then bind it to an approval preview |
+| `send PREVIEW_ID --confirm --ack-risk` | Revalidate account and room, reserve the attempt durably, then send the preview's text or image once |
 | `receipt PREVIEW_ID` | Inspect the original result and any later verification |
 | `reconcile PREVIEW_ID --log-id LOG_ID` | Verify an ambiguous send through history, without resending |
 | `auth refresh` | Rotate the token and persist encrypted credentials |
@@ -77,7 +78,7 @@ kakao-headless chats --search 'Room name' --ack-risk
 kakao-headless history 'CHAT_ID' --count 30 --ack-risk
 ```
 
-### Approve and send
+### Approve and send text
 
 ```sh
 printf '%s' 'This is one test message. No reply needed.' > message.txt
@@ -87,6 +88,17 @@ kakao-headless send 'PREVIEW_ID' --confirm --ack-risk
 kakao-headless receipt 'PREVIEW_ID'
 ```
 
+### Approve and send one image
+
+```sh
+kakao-headless preview 'CHAT_ID' --image-file FILE --ack-risk
+# Review the exact room and image metadata. Then explicitly approve:
+kakao-headless send 'PREVIEW_ID' --confirm --ack-risk
+kakao-headless receipt 'PREVIEW_ID'
+```
+
+An image preview accepts exactly one PNG or JPEG file, at most 10 MiB, with each dimension at most 20,000 pixels and at most 100 million pixels total. PNG/JPEG structure and headers are checked, but the file is not fully decoded. The preview creates a private immutable generic-named `.image.bin` copy with mode `0600`; it does not retain or expose the source filename or path. Original bytes, including any embedded EXIF or other metadata, are preserved. Remove sensitive metadata before creating the preview. Captions, galleries, video, audio and other attachments are unsupported.
+
 ### Reconcile instead of retrying
 
 ```sh
@@ -94,15 +106,16 @@ kakao-headless receipt 'PREVIEW_ID'
 kakao-headless reconcile 'PREVIEW_ID' --log-id 'LOG_ID' --ack-risk
 ```
 
-This checks the sender, recipient, log ID, exact text, message type and attempt-time window. The original response stays intact; separate history evidence is added. It never invokes WRITE.
+This checks the sender, recipient, log ID, message type and attempt-time window, and checks exact text for text previews. For image previews it checks the preview-bound SHA-256 and the exact own-history image fingerprint: SHA-1, size, dimensions, MIME type, plus an optional server key when present. The original response stays intact; separate history evidence is added. It never invokes a send operation.
 
 ## Why the extra checks?
 
 A network error does not mean a message was not sent. A response can be lost after the server has accepted it.
 
-- A preview lasts ten minutes and is bound to the account and recipient snapshot.
-- A durable reservation is saved **before** the network call.
-- The same preview cannot be automatically retried after a crash, rejection or unknown result.
+- A preview lasts ten minutes and is bound to the account and recipient snapshot. An image preview is also bound to the SHA-256 of its immutable private copy.
+- The account and room are revalidated, then a durable reservation is saved **before** any `SHIP` or `POST` operation.
+- One preview has one raw provider path: `SHIP` → `POST` → stream → `COMPLETE`. The CLI never calls a high-level retrying send API and never performs an extra write.
+- The same preview cannot be retried after a crash, rejection, unknown result or an ambiguous response.
 - Packet/body status and IDs are validated; own-history verification is distinct from server acceptance.
 
 This is **at-most-one local attempt per preview**, not guaranteed exactly-once delivery. Deleting state, using another client or creating another preview is outside that protection. A history match is not a recipient read receipt.
@@ -124,7 +137,7 @@ The `@jsap0914` package scope identifies the publisher. **It does not connect an
 - Initial authentication secret: macOS Keychain.
 - Rotated credentials: AES-256-GCM local envelope, protected by a key derived from the Keychain secret.
 - State: `~/.local/state/kakao-headless`, directory `0700`, files `0600`.
-- Previews: plaintext message text and member IDs. Keep private state out of Git and shared folders.
+- Previews: plaintext text or a private immutable image copy, member IDs and metadata. Keep private state out of Git and shared folders.
 
 Back up the Keychain root and encrypted credentials together. `auth logout` deletes local credentials, not the remote session, and requires Keychain deletion permission. Serialize credential-changing commands; concurrent refreshes across processes are unsupported.
 
@@ -132,9 +145,9 @@ Back up the Keychain root and encrypted credentials together. `auth logout` dele
 
 Real-account checks cover room lookup, history, forward paging, one direct-room text send, read-only reconciliation, token rotation, encrypted persistence and fresh-process reconnection. CI runs core tests on macOS/Linux with Node 22/24 and offline contracts against the actual pinned provider. CI never authenticates or sends messages.
 
-**Supported writes: text in existing rooms.** Attachments, quoted replies, new rooms, push listeners, typing, explicit mark-read and room leaving are not CLI features. Read sessions may still affect online presence/session state. IDs must remain exact decimal strings; `--from` is an exclusive lower cursor, not an older-message cursor. History fails explicitly if its bounded scan cannot finish.
+Text and single-image writes in existing rooms are supported. Live checks cover one direct-room text send and one PNG photo send, including fresh-process reconciliation and an independent SHA-256 check of the uploaded image. JPEG support has offline fixtures, not a live-send result. Attachments beyond that one image, captions, galleries, video, audio, file uploads, quoted replies, new rooms, push listeners, typing, explicit mark-read and room leaving are not CLI features. Read sessions may still affect online presence/session state. IDs must remain exact decimal strings; `--from` is an exclusive lower cursor, not an older-message cursor. History fails explicitly if its bounded scan cannot finish.
 
-The first live send had an ambiguous response and was confirmed from own history. Parser fixes have wire-format regression coverage; a second live message was not sent just to repeat that test. See [validation details](docs/VALIDATION.md).
+The first live text send had an ambiguous response and was confirmed from own history. Parser fixes have wire-format regression coverage; a second live text message was not sent just to repeat that test. See [validation details](docs/VALIDATION.md).
 
 ## Requirements
 

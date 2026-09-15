@@ -12,3 +12,4 @@ message.txt
 *.verification.json
 credentials.enc.json
 pending-login.json
+*.image.bin

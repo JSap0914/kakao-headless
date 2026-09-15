@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
+import { readImageFile, validateImageMetadata } from './image.mjs';
 
 const TTL = 600_000;
 const MAX_ID = 9223372036854775807n;
@@ -55,6 +56,39 @@ export class SendGuard {
     try { return JSON.parse(await fs.readFile(file, 'utf8')); }
     catch (e) { fail(e.code === 'ENOENT' ? missing : 'STATE_UNAVAILABLE'); }
   }
+  _imageFile(previewId) { this._file(previewId, 'preview'); return path.join(this.stateDir, previewId + '.image.bin'); }
+  async previewImage(chatId, file) {
+    if (typeof chatId !== 'string') fail('INVALID_ID');
+    chatId = id(chatId);
+    const { data, image } = await readImageFile(file);
+    const identity = this._identity(); const room = await this._room(chatId);
+    if (this._identity() !== identity) fail('ACCOUNT_CHANGED');
+    const createdAt = this._time(); const previewId = randomUUID();
+    const record = { version: 2, previewId, identity, chatId, image, imageFingerprint: hash(image), ...room, createdAt, expiresAt: createdAt + TTL };
+    let h;
+    try {
+      await this._dir();
+      h = await fs.open(this._imageFile(previewId), 'wx', 0o600);
+      await h.writeFile(data); await h.sync(); await h.close(); h = null;
+      await syncDir(this.stateDir);
+      await atomic(this._file(previewId, 'preview'), record);
+    } catch { if (h) await h.close().catch(() => {}); fail('STATE_UNAVAILABLE'); }
+    return record;
+  }
+  async _loadImage(p) {
+    let snapshot;
+    try { snapshot = await readImageFile(this._imageFile(p.previewId)); }
+    catch { fail('IMAGE_SNAPSHOT_UNAVAILABLE'); }
+    if (hash(snapshot.image) !== p.imageFingerprint) fail('IMAGE_SNAPSHOT_CHANGED');
+    return snapshot.data;
+  }
+  _imageMatches(m, p, expectedKey) {
+    const a = m?.attachment;
+    return m?.type === 2 && a && typeof a === 'object' && !Array.isArray(a) &&
+      typeof a.k === 'string' && a.k.length > 0 && (expectedKey === undefined || a.k === expectedKey) &&
+      typeof a.cs === 'string' && a.cs.toLowerCase() === p.image.sha1.toLowerCase() &&
+      a.s === p.image.bytes && a.w === p.image.width && a.h === p.image.height && a.mt === p.image.mimeType;
+  }
   async preview(chatId, text) {
     if (typeof chatId !== 'string') fail('INVALID_ID');
     chatId = id(chatId);
@@ -69,10 +103,14 @@ export class SendGuard {
   }
   _validatePreview(p, previewId) {
     try {
-      if (!p || p.version !== 1 || p.previewId !== previewId ||
+      if (!p || ![1, 2].includes(p.version)) fail('INVALID_PREVIEW');
+      if (p.version === 2) {
+        validateImageMetadata(p.image);
+        if (p.imageFingerprint !== hash(p.image) || p.text !== undefined || p.textFingerprint !== undefined) fail('INVALID_PREVIEW');
+      } else if (typeof p.text !== 'string' || !p.text.trim() || Buffer.byteLength(p.text, 'utf8') > 4000 || p.textFingerprint !== hash(p.text) || p.image !== undefined) fail('INVALID_PREVIEW');
+      if (p.previewId !== previewId ||
           typeof p.chatId !== 'string' || id(p.chatId) !== p.chatId ||
           typeof p.identity !== 'string' || !p.identity.trim() ||
-          typeof p.text !== 'string' || !p.text.trim() || Buffer.byteLength(p.text, 'utf8') > 4000 || p.textFingerprint !== hash(p.text) ||
           !Number.isSafeInteger(p.createdAt) || p.createdAt < 0 || !Number.isSafeInteger(p.expiresAt) || p.expiresAt - p.createdAt !== TTL ||
           (p.title !== null && typeof p.title !== 'string') || (p.displayName !== null && typeof p.displayName !== 'string') ||
           !p.label || p.label !== (p.title?.trim() || p.displayName?.trim()) ||
@@ -132,7 +170,8 @@ export class SendGuard {
     if (matches.length !== 1) fail('HISTORY_AMBIGUOUS');
     const m = matches[0];
     try {
-      if (id(m.author_id) !== p.identity || m.message !== p.text || m.type !== 1 ||
+      if (id(m.author_id) !== p.identity ||
+          (p.version === 2 ? !this._imageMatches(m, p, original.imageKey) : (m.message !== p.text || m.type !== 1)) ||
           !Number.isSafeInteger(m.sent_at) || m.sent_at < Math.floor(reservation.attemptedAt / 1000) ||
           m.sent_at > Math.ceil(reservation.attemptedAt / 1000) + 120) fail('HISTORY_MISMATCH');
       for (const key of ['chat_id', 'chatId']) {
@@ -165,7 +204,12 @@ export class SendGuard {
     const current = await this._room(p.chatId);
     if (current.fingerprint !== p.fingerprint) fail('RECIPIENT_CHANGED');
     valid();
-    const initial = { previewId, chatId: p.chatId, status: 'unknown', code: 'ATTEMPT_RESERVED', attemptedAt: this._time() };
+    // Read the private snapshot, not the original path. Hash-check before reserving
+    // and keep these exact bytes in memory through the one upload attempt.
+    const imageData = p.version === 2 ? await this._loadImage(p) : null;
+    valid();
+    const initial = { previewId, chatId: p.chatId, status: 'unknown', code: 'ATTEMPT_RESERVED', attemptedAt: this._time(),
+      ...(p.version === 2 ? { mediaType: 'image', imageSha256: p.image.sha256 } : {}) };
     let h;
     try {
       h = await fs.open(reservation, 'wx', 0o600);
@@ -183,9 +227,9 @@ export class SendGuard {
     // Reservation stays forever, including failures before the raw write.
     try { valid(); } catch (e) { return save('rejected', e.code); }
     let response;
-    try { response = await this.transport.writeOnce(p.chatId, p.text); }
+    try { response = p.version === 2 ? await this.transport.writeImageOnce(p.chatId, imageData, p.image) : await this.transport.writeOnce(p.chatId, p.text); }
     catch { return save('unknown', 'NETWORK_FAILURE'); }
-    let logId;
+    let logId, imageKey;
     try {
       const packetStatus = response?.statusCode;
       const bodyStatus = response?.body?.status;
@@ -193,22 +237,38 @@ export class SendGuard {
       if (packetStatus === -1) return await save('unknown', 'NETWORK_FAILURE');
       if (packetStatus !== 0 || (bodyStatus !== undefined && bodyStatus !== 0)) return await save('rejected', 'PROVIDER_REJECTED');
       logId = id(response.body?.logId);
+      if (p.version === 2) {
+        const photo = response.body?.photo;
+        if (!photo || id(photo.authorId) !== p.identity || photo.type !== 2 ||
+            !Number.isSafeInteger(photo.sentAt) || photo.sentAt < Math.floor(initial.attemptedAt / 1000) ||
+            photo.sentAt > Math.ceil(initial.attemptedAt / 1000) + 120) return await save('unknown', 'INVALID_RESPONSE', { logId });
+        // Acceptance does not prove matching bytes. History checks the input SHA-1,
+        // size, dimensions, MIME, and (when supplied) this server attachment key.
+        if (typeof photo.attachment?.k === 'string' && photo.attachment.k) imageKey = photo.attachment.k;
+      }
       for (const key of ['chatId', 'chat_id']) {
         if (response.body[key] !== undefined && echoedChatId(response.body[key]) !== p.chatId) return await save('unknown', 'RESPONSE_CHAT_MISMATCH');
         if (response[key] !== undefined && echoedChatId(response[key]) !== p.chatId) return await save('unknown', 'RESPONSE_CHAT_MISMATCH');
       }
     } catch (e) { if (e.code === 'STATE_UNAVAILABLE') throw e; return save('unknown', 'INVALID_RESPONSE'); }
     // Persist acceptance before the optional history read.
-    await save('accepted_unverified', 'HISTORY_NOT_VERIFIED', { logId });
+    const evidence = { logId, ...(p.version === 2 ? { mediaType: 'image', imageSha256: p.image.sha256, ...(imageKey ? { imageKey } : {}) } : {}) };
+    await save('accepted_unverified', 'HISTORY_NOT_VERIFIED', evidence);
     let verified = false;
     try {
       if (this._identity() === p.identity) {
-        const messages = await this.transport.getMessages(p.chatId);
-        verified = this._identity() === p.identity && Array.isArray(messages) && messages.some(m => {
-          try { return id(m.log_id) === logId && id(m.author_id) === p.identity && m.message === p.text; } catch { return false; }
-        });
+        const messages = await this.transport.getMessages(p.chatId, { count: 200 });
+        verified = this._identity() === p.identity && Array.isArray(messages) && messages.filter(m => {
+          try {
+            if (id(m.log_id) !== logId || id(m.author_id) !== p.identity) return false;
+            if (p.version !== 2) return m.message === p.text;
+            return this._imageMatches(m, p, imageKey) && Number.isSafeInteger(m.sent_at) &&
+              m.sent_at >= Math.floor(initial.attemptedAt / 1000) && m.sent_at <= Math.ceil(initial.attemptedAt / 1000) + 120 &&
+              (m.chat_id === undefined || id(m.chat_id) === p.chatId) && (m.chatId === undefined || id(m.chatId) === p.chatId);
+          } catch { return false; }
+        }).length === 1;
       }
     } catch { /* Acceptance stands even if history is unavailable. */ }
-    return save(verified ? 'verified' : 'accepted_unverified', verified ? 'HISTORY_MATCH' : 'HISTORY_NOT_VERIFIED', { logId });
+    return save(verified ? 'verified' : 'accepted_unverified', verified ? 'HISTORY_MATCH' : 'HISTORY_NOT_VERIFIED', evidence);
   }
 }

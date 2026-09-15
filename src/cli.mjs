@@ -10,7 +10,7 @@ import { Auth } from './auth.mjs';
 import { SendGuard } from './guard.mjs';
 import { LocoTransport, loadProvider, validAccount, fail, SUPPORTED_VERSION } from './transport.mjs';
 
-const HELP = `kakao-headless 0.2.1 (community integration, macOS Keychain)
+const HELP = `kakao-headless 0.3.0 (community integration, macOS Keychain)
 
   doctor                              Offline runtime/provider check
   aside install --account N            Connect this CLI to an Aside account
@@ -24,6 +24,8 @@ const HELP = `kakao-headless 0.2.1 (community integration, macOS Keychain)
   chats [--search NAME] --ack-risk     Existing chat list, no mark-read calls
   history CHAT_ID [--count 30] [--from LOG_ID] --ack-risk
   preview CHAT_ID --text-file FILE --ack-risk
+  preview CHAT_ID --image-file FILE --ack-risk
+                                      One PNG/JPEG, at most 10 MiB; no caption
   send PREVIEW_ID --confirm --ack-risk Exactly one local attempt; no retry
   receipt PREVIEW_ID                   Inspect durable local outcome
   reconcile PREVIEW_ID --log-id LOG_ID --ack-risk
@@ -62,17 +64,17 @@ try {
   const { values: flags, positionals: args } = parseArgs({ allowPositionals: true, strict: true, options: {
     help: {type:'boolean',short:'h'}, 'ack-risk': {type:'boolean'}, confirm: {type:'boolean'},
     email:{type:'string'}, search:{type:'string'}, count:{type:'string'}, from:{type:'string'},
-    'text-file':{type:'string'}, 'state-dir':{type:'string'}, 'log-id':{type:'string'},
+    'text-file':{type:'string'}, 'image-file':{type:'string'}, 'state-dir':{type:'string'}, 'log-id':{type:'string'},
     account:{type:'string'}, 'account-root':{type:'string'}
   } });
   const [command, target] = args;
   if (flags.help || !command) { console.log(HELP); }
   else if (command === 'doctor') {
     let provider = 'missing'; try { await loadProvider(); provider = SUPPORTED_VERSION; } catch(e) { provider = e.code; }
-    out({ version:'0.2.1', node:process.version, platform:process.platform, keychain_supported:process.platform==='darwin', provider, live_connection_checked:false, credential_status:'not_checked', aside_builtin_modified:false });
+    out({ version:'0.3.0', node:process.version, platform:process.platform, keychain_supported:process.platform==='darwin', provider, live_connection_checked:false, credential_status:'not_checked', aside_builtin_modified:false });
   } else if (command === 'aside') {
     if (args.length !== 2 || !['install','doctor','uninstall'].includes(target)) fail('INVALID_COMMAND');
-    const options = { account: flags.account, accountRoot: flags['account-root'], version:'0.2.1' };
+    const options = { account: flags.account, accountRoot: flags['account-root'], version:'0.3.0' };
     const operation = { install:installAside, doctor:doctorAside, uninstall:uninstallAside }[target];
     out(await operation(options));
   } else {
@@ -98,15 +100,21 @@ try {
         }
       } else {
         if (command === 'send' && !flags.confirm) fail('EXPLICIT_CONFIRM_REQUIRED');
+        if (command === 'preview') {
+          if (flags['text-file'] && flags['image-file']) fail('EXACTLY_ONE_CONTENT_FILE_REQUIRED');
+          if (!flags['text-file'] && !flags['image-file']) fail('CONTENT_FILE_REQUIRED');
+        } else if (flags['text-file'] !== undefined || flags['image-file'] !== undefined) fail('CONTENT_FILE_ONLY_FOR_PREVIEW');
         const account = await vault.get('account'); if (!account) fail('AUTH_REQUIRED');
         transport = await LocoTransport.connect({account,stateDir});
         const guard = new SendGuard({stateDir,transport});
         if (command === 'chats') out(await transport.listChats(flags.search));
         if (command === 'history') out(await transport.getMessages(target,{count:flags.count===undefined?30:Number(flags.count),from:flags.from}));
         if (command === 'preview') {
-          if (!flags['text-file']) fail('TEXT_FILE_REQUIRED');
-          const text = await readFile(flags['text-file'],'utf8');
-          out(await guard.preview(target,text));
+          if (flags['image-file']) out(await guard.previewImage(target, flags['image-file']));
+          else {
+            const text = await readFile(flags['text-file'],'utf8');
+            out(await guard.preview(target,text));
+          }
         }
         if (command === 'reconcile') {
           if (!flags['log-id']) fail('LOG_ID_REQUIRED');

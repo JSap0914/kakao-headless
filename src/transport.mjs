@@ -2,6 +2,7 @@ import { readFile, mkdir } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { Long } from 'bson';
+import { sendPhotoOnce } from './photo-transport.mjs';
 
 export const SUPPORTED_VERSION = '2.37.1';
 export function fail(code) { const e = new Error(code); e.code = code; throw e; }
@@ -29,7 +30,7 @@ export async function loadProvider() {
 }
 
 export class LocoTransport {
-  constructor(client, identity) { this.client = client; this.identity = validId(identity); }
+  constructor(client, identity, options = {}) { this.client = client; this.identity = validId(identity); this.deviceType = options.deviceType ?? client.deviceType; }
   static async connect({ account, stateDir, provider }) {
     validAccount(account);
     const sdk = provider ?? await loadProvider();
@@ -41,7 +42,7 @@ export class LocoTransport {
     try {
       await client.login({ oauthToken: account.oauth_token, userId: account.user_id, deviceUuid: account.device_uuid, deviceType: account.device_type });
       await client.acquireSession();
-      return new LocoTransport(client, account.user_id);
+      return new LocoTransport(client, account.user_id, { deviceType: account.device_type });
     } catch { client.close(); fail('PROVIDER_LOGIN_FAILED'); }
   }
   async listChats(search) { return this.client.getChats({ all: true, search, resolveTitles: true }); }
@@ -82,6 +83,9 @@ export class LocoTransport {
     // acquireSession may connect, but the raw session call below is invoked once.
     const session = await this.client.acquireSession();
     return session.sendMessage(Long.fromString(chatId), text);
+  }
+  async writeImageOnce(chatId, data, image) {
+    return sendPhotoOnce(this.client, this.identity, validId(chatId), data, image, { deviceType: this.deviceType });
   }
   close() { this.client.close(); }
 }

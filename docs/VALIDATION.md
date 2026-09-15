@@ -1,6 +1,6 @@
 # Validation scope (2026-09-15)
 
-This document deliberately excludes account IDs, contact names, room IDs, message contents, credentials and screenshots of private conversations.
+This document deliberately excludes account IDs, contact names, room IDs, local paths, message contents, image contents, credentials and screenshots of private conversations.
 
 ## Real-account checks
 
@@ -12,10 +12,19 @@ This document deliberately excludes account IDs, contact names, room IDs, messag
 | Exact room lookup and stable member snapshot | Passed | Direct-room identity checked before sending |
 | Strict message history and forward cursor | Passed | Fresh process and exclusive lower cursor checked |
 | One text WRITE to an approved direct room | Own-history confirmed | Initial receipt was `unknown / INVALID_RESPONSE`; one matching own message appeared afterwards |
-| Automatic acceptance of a fresh WRITE response after patch | Not live-retested | No second message sent to the recipient just to test a parser change |
+| Automatic acceptance of a fresh text WRITE response after patch | Not live-retested | No second text message sent to the recipient just to test a parser change |
+| One PNG photo to an approved direct room | Verified | One SHIP/POST/COMPLETE attempt; immediate own-history checksum, size, dimensions, MIME type, server key, author and log ID matched |
+| Photo reconciliation in a fresh process | Passed | Original verified receipt preserved; separate history verification added; duplicate attempt blocked offline before network |
+| Read-only original-image download | Passed | Downloaded from the URL in own history; SHA-256 exactly matched the approved snapshot. This was an additional live check, not an automatic CLI send step |
 | Token rotation, encrypted persistence and new-process reconnect | Passed after fix | Existing Keychain root left unchanged; rotated credentials encrypted in a private local envelope; refreshed credentials successfully logged in |
 | Read-only reconciliation | Passed | Exact own log ID, sender, text, type and time window verified; separate evidence preserves original ambiguous response |
 | Duplicate attempt prevention against actual reservation | Passed | `ALREADY_ATTEMPTED` before any network call; no second WRITE |
+
+## Offline and contract coverage
+
+The automated suite exercises guarded preview/send state transitions, durable reservations, no-retry behavior, and offline contracts against the exact pinned `agent-messenger@2.37.1` provider. The provider's private connection/config imports are version-checked `file:` URL imports, so the integration is intentionally compatibility-coupled to that exact version. Offline contracts are not a real-account photo E2E result.
+
+Image validation checks PNG/JPEG structure and headers, file-size and pixel bounds, and uses a private generic-named immutable image copy. It does not fully decode images. Image own-history verification requires the preview-bound SHA-256 plus exact SHA-1, size, dimensions, MIME type and optional server key. These implementation and contract checks do not establish that a photo has been accepted or delivered on a live account.
 
 ## Problems found and changes
 
@@ -23,9 +32,10 @@ This document deliberately excludes account IDs, contact names, room IDs, messag
 2. Keychain reads worked but updating the existing credential item was rejected on this host. The credential vault now leaves that root unchanged and encrypts rotated credentials locally using AES-256-GCM with a Keychain-secret-derived HKDF key, fresh salt/nonce and account/device-bound authenticated context. No OS permission changes or denied Keychain mutations are retried. A persistence preflight precedes remote rotation. Live refresh succeeded; the encrypted file contained no plaintext token, had mode 0600, and a new process successfully logged in and read history with the stored rotated credentials. A save failure after preflight is still possible; do not retry blindly.
 3. `doctor` now states that it is an offline check rather than emitting a permanent `live_kakao_tested: false` project-wide claim.
 4. Read-only `reconcile` verifies an explicitly supplied log ID against original account, recipient, exact text, message type and attempt-time window. It adds a separate evidence file and never calls WRITE or replaces the original unknown receipt.
+5. Image support is constrained to one eligible PNG/JPEG preview with no caption or gallery. One PNG was sent once and independently verified as described above. JPEG sending has only offline coverage. No recipient-read or receiver-device-rendering claim is made.
 
 ## What is not integrated
 
-The provider exposes more features than this bridge. Photos, video, audio, file/multi-photo uploads, quoted replies, push/event listeners, typing indicators, explicit mark-read, room leaving, and general profile APIs are not exposed as bridge CLI commands. They were **not** live-tested. It would be incorrect to say that all agent-messenger features are integrated.
+The provider exposes more features than this bridge. Captions, galleries, video, audio, general file uploads, quoted replies, push/event listeners, typing indicators, explicit mark-read, room leaving, and general profile APIs are not exposed as bridge CLI commands. They were **not** live-tested. It would be incorrect to say that all agent-messenger features are integrated.
 
 Logout and destructive/session-changing actions are not exercised against the working account merely to increase test coverage. Authentication, rotation, errors, expiry, recipient changes, duplicate suppression and crash reservations have automated fixtures; a fixture is not an account E2E test.
