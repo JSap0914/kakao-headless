@@ -10,7 +10,7 @@ import { Auth } from './auth.mjs';
 import { SendGuard } from './guard.mjs';
 import { LocoTransport, loadProvider, validAccount, fail, SUPPORTED_VERSION } from './transport.mjs';
 
-const HELP = `kakao-headless 0.2.0 (community integration, macOS Keychain)
+const HELP = `kakao-headless 0.2.1 (community integration, macOS Keychain)
 
   doctor                              Offline runtime/provider check
   aside install --account N            Connect this CLI to an Aside account
@@ -69,10 +69,10 @@ try {
   if (flags.help || !command) { console.log(HELP); }
   else if (command === 'doctor') {
     let provider = 'missing'; try { await loadProvider(); provider = SUPPORTED_VERSION; } catch(e) { provider = e.code; }
-    out({ version:'0.2.0', node:process.version, platform:process.platform, keychain_supported:process.platform==='darwin', provider, live_connection_checked:false, credential_status:'not_checked', aside_builtin_modified:false });
+    out({ version:'0.2.1', node:process.version, platform:process.platform, keychain_supported:process.platform==='darwin', provider, live_connection_checked:false, credential_status:'not_checked', aside_builtin_modified:false });
   } else if (command === 'aside') {
     if (args.length !== 2 || !['install','doctor','uninstall'].includes(target)) fail('INVALID_COMMAND');
-    const options = { account: flags.account, accountRoot: flags['account-root'], version:'0.2.0' };
+    const options = { account: flags.account, accountRoot: flags['account-root'], version:'0.2.1' };
     const operation = { install:installAside, doctor:doctorAside, uninstall:uninstallAside }[target];
     out(await operation(options));
   } else {

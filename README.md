@@ -19,7 +19,7 @@ It uses the pinned `agent-messenger` LOCO provider and adds credential storage, 
 
 ```sh
 npm install -g --ignore-scripts \
-  https://github.com/JSap0914/kakao-headless/releases/download/v0.2.0/jsap0914-kakao-headless-0.2.0.tgz \
+  https://github.com/JSap0914/kakao-headless/releases/download/v0.2.1/jsap0914-kakao-headless-0.2.1.tgz \
   agent-messenger@2.37.1
 kakao-headless doctor
 ```

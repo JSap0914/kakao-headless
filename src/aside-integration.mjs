@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { createHash, randomUUID } from 'node:crypto';
 
 const NAME = 'kakao-headless';
-const DEFAULT_VERSION = '0.2.0';
+const DEFAULT_VERSION = '0.2.1';
 const digest = value => createHash('sha256').update(value).digest('hex');
 const quote = value => `'${value.replaceAll("'", "'\\''")}'`;
 function fail(code, message) { throw Object.assign(new Error(message), { code }); }

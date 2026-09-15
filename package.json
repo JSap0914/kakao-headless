@@ -1,6 +1,6 @@
 {
   "name": "@jsap0914/kakao-headless",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Read, approve and send KakaoTalk from your agent. Community integration for Aside.",
   "type": "module",
   "license": "MIT",
